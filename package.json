@@ -1,0 +1,30 @@
+{
+  "name": "serial-rename",
+  "version": "0.0.1",
+  "description": "",
+  "main": "build/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "bin": {
+    "serial-rename": "./build/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agreatfool/serial-rename.git"
+  },
+  "author": "Jonathan Dai",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/agreatfool/serial-rename/issues"
+  },
+  "homepage": "https://github.com/agreatfool/serial-rename#readme",
+  "devDependencies": {
+    "@types/node": "10.5.2"
+  },
+  "dependencies": {
+    "commander": "2.16.0",
+    "mz": "2.7.0",
+    "readdir-sorted": "2.0.3"
+  }
+}
