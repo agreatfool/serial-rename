@@ -1,38 +1,39 @@
 #!/usr/bin/env node
-
-import * as LibFs from 'mz/fs';
+import * as LibFs from 'fs/promises';
 import * as LibPath from 'path';
-
-import * as program from 'commander';
+import { Command } from 'commander';
 import * as readdirSorted from 'readdir-sorted';
-import {Stats} from "fs";
 
 const pkg = require('../package.json');
-
 const MODES = ['NORMAL', 'SUB'];
 const BASE_NAME = 'renamed_';
 
+const program = new Command();
 program.version(pkg.version)
     .description('serial-rename: rename files')
-    .option('-d, --source_dir <string>', 'source dir')
+    .requiredOption('-d, --source_dir <string>', 'source dir')
     .option(
-        `-m, --source_mode <${MODES.join('|')}>, default is ${MODES[0]}`,
+        `-m, --source_mode <${MODES.join('|')}>, default is ${MODES[1]}`,
         'source modes:\n' +
         '\tSUB: read all files of specified dir\'s sub dirs, and rename them\n' +
-        '\tNORMAL: read all files of specified dir, and rename them'
+        '\tNORMAL: read all files of specified dir, and rename them', MODES[1]
     )
-    .option('-o, --output_dir <dir>', 'output directory')
-    .option('-n, --start_number <num>', 'rename start number, default is 0', parseInt)
-    .option('-N, --output_name <string>', `output basename, optional, default is ${BASE_NAME}`)
-    .option('-l, --locale <string>', 'locale by which file list read from dir sorted, default is en, see https://www.npmjs.com/package/readdir-sorted')
+    .requiredOption('-o, --output_dir <dir>', 'output directory')
+    .option('-n, --start_number <num>', 'rename start number, default is 0', '0')
+    .option('-N, --output_name <string>', `output basename, optional, default is ${BASE_NAME}`, BASE_NAME)
+    .option('-c, --count_length <num>', 'output file name count length, e.g 3 => 001, 4 => 0001, default is 4', '4')
+    .option('-l, --locale <string>', 'locale by which file list read from dir sorted, default is en, see https://www.npmjs.com/package/readdir-sorted', 'en')
     .parse(process.argv);
 
-const ARGS_SOURCE_DIR = (program as any).source_dir === undefined ? undefined : (program as any).source_dir;
-const ARGS_SOURCE_MODE = (program as any).source_mode === undefined ? MODES[0] : (program as any).source_mode;
-const ARGS_OUTPUT_DIR = (program as any).output_dir === undefined ? undefined : (program as any).output_dir;
-const ARGS_START_NUM = (program as any).start_number === undefined ? 0 : (program as any).start_number;
-const ARGS_OUTPUT_NAME = !(program as any).output_name ? BASE_NAME : (program as any).output_name;
-const ARGS_LOCALE = (program as any).locale === undefined ? 'en' : (program as any).locale;
+const options = program.opts();
+const ARGS_SOURCE_DIR = options.source_dir;
+const ARGS_SOURCE_MODE = options.source_mode;
+const ARGS_OUTPUT_DIR = options.output_dir;
+const ARGS_START_NUM = options.start_number === undefined ? 0 : parseInt(options.start_number);
+const ARGS_OUTPUT_NAME = options.output_name;
+const ARGS_COUNT_LENGTH = options.count_length === undefined ? 4 : parseInt(options.count_length);
+const ARGS_LOCALE = options.locale;
+console.log(options);
 
 class SerialRename {
 
@@ -55,15 +56,8 @@ class SerialRename {
             console.log('Source directory required, please provide -d option');
             process.exit(1);
         }
-        let sourceStat: Stats = LibFs.statSync(ARGS_SOURCE_DIR);
-        if (!sourceStat.isDirectory()) {
+        if (!(await LibFs.stat(ARGS_SOURCE_DIR)).isDirectory()) {
             console.log('Valid source directory required, please check -d option');
-            process.exit(1);
-        }
-
-        // -m source_mode
-        if (MODES.indexOf(ARGS_SOURCE_MODE) === -1) {
-            console.log('Valid source mode required, please check -m option');
             process.exit(1);
         }
 
@@ -72,63 +66,61 @@ class SerialRename {
             console.log('Output directory required, please provide -o option');
             process.exit(1);
         }
-        let destStat: Stats = LibFs.statSync(ARGS_OUTPUT_DIR);
-        if (!destStat.isDirectory()) {
+        if (!(await LibFs.stat(ARGS_OUTPUT_DIR)).isDirectory()) {
             console.log('Valid output directory required, please check -o option');
             process.exit(1);
         }
     }
 
     private async _process() {
-        if (ARGS_SOURCE_MODE === MODES[0]) {
-            return await this._processDir();
-        }
+        return this._processDir(ARGS_SOURCE_DIR);
+    }
 
-        const dirFiles = await readdirSorted(ARGS_SOURCE_DIR, {
+    private async _processDir(path: string) {
+        console.log(`Dir: ${path}`);
+        const dirFiles = await readdirSorted(path, {
             locale: ARGS_LOCALE,
             numeric: true
         });
-
-        for (let i = 0; i < dirFiles.length; i++) {
-            if (dirFiles[i] === '.DS_Store') {
+        for (const dirFile of dirFiles) {
+            if (dirFile === '.DS_Store') {
                 continue;
             }
-
-            await this._processDir(dirFiles[i]);
+            const absPath = LibPath.join(path, dirFile);
+            const stat = await LibFs.stat(absPath);
+            if (stat.isFile()) {
+                await this._processFile(absPath);
+            } else {
+                if (ARGS_SOURCE_MODE === MODES[0]) {
+                    // mode "NORMAL", no sub dirs
+                    continue;
+                }
+                await this._processDir(absPath);
+            }
         }
     }
 
-    private async _processDir(path?: string) {
-        if (path === undefined) {
-            path = '/'; // relative path
+    private async _processFile(filePath: string) {
+        console.log(`File: ${filePath}`);
+        if (!(await LibFs.stat(filePath)).isFile()) {
+            return;
         }
 
-        let baseDir = LibPath.join(ARGS_SOURCE_DIR, path);
-        console.log(`Processing: ${baseDir}`);
-        const dirFiles = await readdirSorted(LibPath.join(ARGS_SOURCE_DIR, path), {
-            locale: ARGS_LOCALE,
-            numeric: true
-        });
+        const parsed = LibPath.parse(filePath);
+        const destPath = LibPath.join(ARGS_OUTPUT_DIR, `${ARGS_OUTPUT_NAME}${this._padNumLeft0(this._num, ARGS_COUNT_LENGTH)}${parsed.ext}`);
+        await LibFs.copyFile(filePath, destPath);
 
-        for (let i = 0; i < dirFiles.length; i++) {
-            if (dirFiles[i] === '.DS_Store') {
-                continue;
-            }
-            let sourcePath = LibPath.join(baseDir, dirFiles[i]);
-            let stat: Stats = LibFs.statSync(sourcePath);
-            if (!stat.isFile()) {
-                continue;
-            }
+        this._num++;
+    }
 
-            let parsed = LibPath.parse(dirFiles[i]);
-            let destPath = LibPath.join(ARGS_OUTPUT_DIR, ARGS_OUTPUT_NAME + this._num.toFixed(3) + parsed.ext);
-
-            console.log(`Copy from: ${sourcePath}, to: ${destPath}`);
-
-            LibFs.copyFileSync(sourcePath, destPath);
-
-            this._num++;
+    private _padNumLeft0(num: number, length: number): string {
+        // (5, 4) => '0005'
+        let str = String(num);
+        const gap = length - str.length;
+        if (gap > 0) {
+            str = new Array(gap + 1).join('0') + str;
         }
+        return str;
     }
 
 }
@@ -140,5 +132,5 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (error) => {
-    console.error(`Process on unhandledRejection error = ${error.stack}`);
+    console.error(`Process on unhandledRejection error = ${error}`);
 });
